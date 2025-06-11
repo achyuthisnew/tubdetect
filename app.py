@@ -3,9 +3,73 @@ from PIL import Image
 import torch
 import numpy as np
 import torchvision.models as models
+import torch.nn as nn
 
 # Load your model and set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+# Define the number of concepts and concept names (adjust as needed)
+NUM_CONCEPTS = 10
+concepts = [
+    "Consolidation", "Cavitation", "Fibrosis",
+    "Patchy/Consolidative Pattern", "Upper Lobe Involvement",
+    "Pulmonary Opacities", "Volume Loss", "Architectural Distortion",
+    "Diverse Parenchymal Patterns", "Normal"
+]
+
+class FineTuneModel(nn.Module):
+    def __init__(self, encoder, feature_dim=512):
+        super().__init__()
+        self.encoder = encoder
+        self.classifier = nn.Linear(feature_dim, 1)
+    def forward(self, x):
+        return torch.sigmoid(self.classifier(self.encoder(x)))
+
+class ConceptBottleneckModel(nn.Module):
+    def __init__(self, simclr_encoder, num_concepts=NUM_CONCEPTS, hidden_dim=32):
+        super().__init__()
+        self.encoder = simclr_encoder
+        feat_dim = 512  # From FineTuneModel's feature_dim
+        # Concept predictor
+        self.concept_predictor = nn.Sequential(
+            nn.Linear(feat_dim, 128),
+            nn.ReLU(),
+            nn.Linear(128, num_concepts),
+            nn.Sigmoid()
+        )
+        # Classifier
+        self.classifier = nn.Sequential(
+            nn.Linear(num_concepts, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1)
+        )
+        self.concept_names = concepts
+
+    def forward(self, x):
+        with torch.no_grad():
+            features = self.encoder(x)  # [batch, 512]
+        concepts = self.concept_predictor(features)
+        logits = self.classifier(concepts)
+        return logits, concepts
+
+class CBMWithBNNHead(nn.Module):
+    def __init__(self, cbm_model, num_concepts, hidden_dim=32, dropout_p=0.1):
+        super().__init__()
+        self.cbm = cbm_model
+        self.bnn_head = nn.Sequential(
+            nn.Linear(num_concepts, hidden_dim),
+            nn.ReLU(),
+            nn.BatchNorm1d(hidden_dim),
+            nn.Dropout(dropout_p),
+            nn.Linear(hidden_dim, 1)
+        )
+    def forward(self, x):
+        with torch.no_grad():
+            _, concepts = self.cbm(x)  # Get concept vector from frozen CBM
+        logits = self.bnn_head(concepts)
+        return logits, concepts
+
 
 @st.cache_resource
 def load_model():
