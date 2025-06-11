@@ -4,6 +4,7 @@ import torch
 import numpy as np
 import torchvision.models as models
 import torch.nn as nn
+from models import FineTuneModel, ConceptBottleneckModel, CBMWithBNNHead
 
 # Load your model and set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
